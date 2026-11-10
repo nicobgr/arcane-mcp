@@ -93,7 +93,7 @@ src/arcane_mcp/
 └── tools/
     ├── __init__.py
     ├── activities.py      # 7 tools: list_activities, get_activity, cancel_activity, clear_activity_history, list_events, get_environment_events, delete_event
-    ├── containers.py      # 18 tools: list, inspect, create, start, stop, restart, kill, pause, unpause, remove, redeploy, commit, update, exec, logs, stats, set_auto_update, counts
+    ├── containers.py      # 19 tools: list, inspect, create, start, stop, restart, kill, pause, unpause, remove, redeploy, commit, update, exec, logs, processes, stats, set_auto_update, counts
     ├── environments.py    # 5 tools: list, get, create, update, remove
     ├── images.py          # 19 tools: list, inspect, pull, remove, tag, prune, counts, build, search, upload, history, export, attestations, scan_vulns, get_vulns, vuln_summary, check_update, check_all_updates, update_summary
     ├── networks.py        # 9 tools: list, create, inspect, remove, connect, disconnect, prune, counts, topology

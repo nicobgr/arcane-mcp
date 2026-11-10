@@ -153,28 +153,68 @@ async def test_exec_in_container(mcp: Any, httpx_mock: Any) -> None:
 # ── get_container_logs ────────────────────────────────────────────────
 
 
+LOG_URL = "http://localhost:3552/api/environments/0/containers/c1/logs/download"
+LOG_TEXT = "a info start\nb ERROR boom\nc info tick\nd error again\ne info tick\n"
+
+
 @pytest.mark.asyncio
-async def test_get_container_logs(mcp: Any, httpx_mock: Any) -> None:
-    """get_container_logs fetches logs with tail param."""
-    httpx_mock.add_response(
-        url="http://localhost:3552/api/environments/0/containers/c1/logs?tail=100",
-        method="GET",
-        json={"logs": "line1\nline2"},
-    )
+async def test_get_container_logs_tail(mcp: Any, httpx_mock: Any) -> None:
+    """get_container_logs downloads the log and keeps the last `tail` lines."""
+    httpx_mock.add_response(url=LOG_URL, method="GET", text=LOG_TEXT)
+    result = await call_tool(mcp, "get_container_logs", container_id="c1", tail=2)
+    assert result["logs"] == "d error again\ne info tick"
+    assert result["matched_lines"] == 5
+    assert result["returned_lines"] == 2
+
+
+@pytest.mark.asyncio
+async def test_get_container_logs_all(mcp: Any, httpx_mock: Any) -> None:
+    """tail=0 returns every line."""
+    httpx_mock.add_response(url=LOG_URL, method="GET", text=LOG_TEXT)
+    result = await call_tool(mcp, "get_container_logs", container_id="c1", tail=0)
+    assert result["returned_lines"] == 5
+
+
+@pytest.mark.asyncio
+async def test_get_container_logs_grep(mcp: Any, httpx_mock: Any) -> None:
+    """grep filters case-insensitively before the tail is applied."""
+    httpx_mock.add_response(url=LOG_URL, method="GET", text=LOG_TEXT)
+    result = await call_tool(mcp, "get_container_logs", container_id="c1", tail=1, grep="error")
+    assert result["logs"] == "d error again"
+    assert result["matched_lines"] == 2
+
+
+@pytest.mark.asyncio
+async def test_get_container_logs_http_error(mcp: Any, httpx_mock: Any) -> None:
+    """get_container_logs returns an error dict with the response body."""
+    httpx_mock.add_response(url=LOG_URL, method="GET", status_code=403, text="forbidden")
     result = await call_tool(mcp, "get_container_logs", container_id="c1")
-    assert result == {"logs": "line1\nline2"}
+    assert result["status_code"] == 403
+    assert result["detail"] == "forbidden"
+
+
+# ── get_container_processes ───────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_get_container_processes(mcp: Any, httpx_mock: Any) -> None:
+    """get_container_processes returns the process snapshot."""
+    payload = {"success": True, "data": {"titles": ["PID", "%MEM"], "processes": [["1", "12.3"]]}}
+    httpx_mock.add_response(
+        url="http://localhost:3552/api/environments/0/containers/c1/processes",
+        method="GET",
+        json=payload,
+    )
+    result = await call_tool(mcp, "get_container_processes", container_id="c1")
+    assert result == payload
 
 
 # ── get_container_stats ───────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_get_container_stats(mcp: Any, httpx_mock: Any) -> None:
-    """get_container_stats fetches resource stats."""
-    httpx_mock.add_response(
-        url="http://localhost:3552/api/environments/0/containers/c1/stats",
-        method="GET",
-        json={"cpu": 0.5, "memory": 1048576},
-    )
+async def test_get_container_stats_not_available(mcp: Any, httpx_mock: Any) -> None:
+    """get_container_stats explains the API gap without calling Arcane."""
     result = await call_tool(mcp, "get_container_stats", container_id="c1")
-    assert result["cpu"] == 0.5
+    assert "WebSocket" in result["error"]
+    assert httpx_mock.get_requests() == []

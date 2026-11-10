@@ -104,17 +104,17 @@ The updateInfo in `list_containers` and `list_projects` shows exactly what needs
 **Scenario:** A container shows "unhealthy" or keeps restarting.
 
 ```text
-get_container_logs(container_id="...", tail=200)
+get_container_logs(container_id="...", tail=200, grep="error")
 → see recent errors
 
-get_container_stats(container_id="...")
-→ check CPU/memory pressure
+get_container_processes(container_id="...")
+→ check CPU/memory per process
 
 exec_in_container(container_id="...", command="curl localhost:8080/health")
 → run diagnostics inside
 ```
 
-**Tools used:** `get_container_logs` → `get_container_stats` → `exec_in_container`
+**Tools used:** `get_container_logs` → `get_container_processes` → `exec_in_container`
 
 ---
 

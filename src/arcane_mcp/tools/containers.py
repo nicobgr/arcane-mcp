@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from collections import deque
 from typing import Any
 
 import httpx
@@ -175,18 +176,47 @@ def register(mcp: FastMCP) -> None:
             return {"error": str(e)}
 
     @mcp.tool()
-    async def get_container_logs(container_id: str, tail: int = 100, env_id: str = "0", agent_token: str | None = None) -> Any:
-        """Fetch logs from a container. NOTE: The Arcane API may not expose a direct logs endpoint. If 404 is returned, use SSH to the Docker host as workaround."""
+    async def get_container_logs(
+        container_id: str, tail: int = 100, grep: str | None = None, env_id: str = "0", agent_token: str | None = None
+    ) -> Any:
+        """Fetch the last `tail` log lines of a container (0 = all), optionally only lines containing `grep` (case-insensitive)."""
         client = require_client()
-        url = f"/api/environments/{env_id}/containers/{container_id}/logs"
-        params = {"tail": str(tail)}
+        # Arcane only offers the full log as a download; the tail and filter are applied here.
+        url = f"/api/environments/{env_id}/containers/{container_id}/logs/download"
+        needle = grep.lower() if grep else None
+        lines: deque[str] = deque(maxlen=tail if tail > 0 else None)
+        total = 0
         try:
-            resp = await client.get(url, params=params, headers=_build_headers(agent_token))
+            async with client.stream("GET", url, headers=_build_headers(agent_token)) as resp:
+                if resp.is_error:
+                    await resp.aread()
+                    logger.warning("HTTP %s on %s: %s", resp.status_code, url, resp.text)
+                    return {"error": f"HTTP {resp.status_code}", "status_code": resp.status_code, "detail": resp.text}
+                async for line in resp.aiter_lines():
+                    if needle is not None and needle not in line.lower():
+                        continue
+                    total += 1
+                    lines.append(line)
+            return {
+                "container_id": container_id,
+                "matched_lines": total,
+                "returned_lines": len(lines),
+                "logs": "\n".join(lines),
+            }
+        except Exception as e:
+            logger.exception("Unexpected error on %s", url)
+            return {"error": str(e)}
+
+    @mcp.tool()
+    async def get_container_processes(container_id: str, env_id: str = "0", agent_token: str | None = None) -> Any:
+        """Snapshot of the processes running inside a container (PID, user, %CPU, %MEM, elapsed, command)."""
+        client = require_client()
+        url = f"/api/environments/{env_id}/containers/{container_id}/processes"
+        try:
+            resp = await client.get(url, headers=_build_headers(agent_token))
             resp.raise_for_status()
             return resp.json()
         except httpx.HTTPStatusError as e:
-            if resp.status_code == 404:
-                return {"error": "Logs endpoint not available in Arcane API. Use SSH to the Docker host as a workaround.", "container_id": container_id}
             logger.warning("HTTP %s on %s: %s", resp.status_code, url, resp.text)
             return {"error": str(e), "status_code": resp.status_code, "detail": resp.text}
         except Exception as e:
@@ -195,21 +225,15 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     async def get_container_stats(container_id: str, env_id: str = "0", agent_token: str | None = None) -> Any:
-        """Get live resource usage stats for a container. NOTE: The Arcane API may not expose a stats endpoint. If 404 is returned, use SSH to the Docker host as workaround."""
-        client = require_client()
-        url = f"/api/environments/{env_id}/containers/{container_id}/stats"
-        try:
-            resp = await client.get(url, headers=_build_headers(agent_token))
-            resp.raise_for_status()
-            return resp.json()
-        except httpx.HTTPStatusError as e:
-            if resp.status_code == 404:
-                return {"error": "Stats endpoint not available in Arcane API. Use SSH to the Docker host as a workaround.", "container_id": container_id}
-            logger.warning("HTTP %s on %s: %s", resp.status_code, url, resp.text)
-            return {"error": str(e), "status_code": resp.status_code, "detail": resp.text}
-        except Exception as e:
-            logger.exception("Unexpected error on %s", url)
-            return {"error": str(e)}
+        """Live container stats are not available: Arcane streams them over WebSocket only, with no REST endpoint. Use get_container_processes for per-process %CPU/%MEM instead."""
+        # Arcane has no GET .../containers/{id}/stats route (not in /api/openapi.json).
+        # Calling it anyway yields 404 locally and a misleading 403 on edge environments.
+        return {
+            "error": "Arcane exposes container stats over WebSocket only; there is no REST endpoint.",
+            "hint": "Use get_container_processes for a %CPU/%MEM snapshot, or `docker stats` via SSH on the Docker host.",
+            "container_id": container_id,
+            "env_id": env_id,
+        }
 
     @mcp.tool()
     async def kill_container(container_id: str, env_id: str = "0", agent_token: str | None = None) -> Any:
